@@ -1,0 +1,92 @@
+name: ${COMPOSE_PROJECT_NAME:-kanboard-qa}
+
+x-logging: &default_logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:17.11-alpine3.24
+    restart: unless-stopped
+    logging: *default_logging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in docker/.env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in docker/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in docker/.env}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      start_period: 15s
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qa_network
+
+  kanboard:
+    image: kanboard/kanboard:v1.2.54
+    restart: unless-stopped
+    logging: *default_logging
+    environment:
+      DB_DRIVER: postgres
+      DB_HOSTNAME: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:?Set POSTGRES_DB in docker/.env}
+      DB_USERNAME: ${POSTGRES_USER:?Set POSTGRES_USER in docker/.env}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in docker/.env}
+      KANBOARD_URL: http://localhost:${KANBOARD_PORT:-8080}/
+      LOG_DRIVER: stdout
+      DEBUG: "false"
+    ports:
+      - "127.0.0.1:${KANBOARD_PORT:-8080}:80"
+    volumes:
+      - kanboard_data:/var/www/app/data
+      - kanboard_plugins:/var/www/app/plugins
+      - kanboard_ssl:/etc/nginx/ssl
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1/healthcheck.php >/dev/null || exit 1"]
+      start_period: 20s
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - qa_network
+
+  jenkins:
+    image: jenkins/jenkins:2.568.2-jdk21
+    restart: unless-stopped
+    logging: *default_logging
+    environment:
+      JAVA_OPTS: -Djenkins.install.runSetupWizard=true
+    ports:
+      - "127.0.0.1:${JENKINS_PORT:-8081}:8080"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8080/login >/dev/null || exit 1"]
+      start_period: 60s
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    networks:
+      - qa_network
+
+networks:
+  qa_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  kanboard_data:
+  kanboard_plugins:
+  kanboard_ssl:
+  jenkins_home:
